@@ -1,0 +1,1906 @@
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Packer Prototype</title>
+    <!-- Load Tailwind CSS --><script src="https://cdn.tailwindcss.com"></script>
+    <!-- NEW: Load EXIF.js library --><script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.js"></script>
+    <style>
+        /* Use Inter font */
+        body {
+            font-family: "Inter", sans-serif;
+        }
+        /* Custom styles for a better file input */
+        .file-input-label {
+            transition: all 0.2s ease-in-out;
+        }
+        .file-input-label:hover {
+            background-color: theme('colors.indigo.700');
+            box-shadow: theme('boxShadow.md');
+        }
+        /* Ensure canvas scales correctly */
+        #preview-canvas {
+            width: 100%;
+            height: auto;
+            /* background-color: #f3f4f6; */ /* Handled by JS now */
+            border-radius: 0.5rem; /* rounded-lg */
+            border: 1px dashed #9ca3af; /* border-gray-400 */
+        }
+        /* Style for the color input */
+        input[type="color"] {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            /* width: 100%; */ /* MODIFIED */
+            width: 2.5rem;    /* MODIFIED */
+            height: 2.5rem; /* h-10 */
+            padding: 0;
+            border: none;
+            border-radius: 0.5rem; /* rounded-lg */
+            cursor: pointer;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+            border-radius: 0.5rem;
+        }
+        input[type="color"]::-webkit-color-swatch {
+            border: 1px solid #e5e7eb; /* border-gray-200 */
+            border-radius: 0.5rem;
+        }
+        input[type="color"]::-moz-color-swatch {
+            border: 1px solid #e5e7eb; /* border-gray-200 */
+            border-radius: 0.5rem;
+        }
+        
+        /* NEW: Styles for eyedropper */
+        #preview-canvas.eyedropper-active {
+            cursor: crosshair !important;
+        }
+        /* MODIFIED: Generic active class for all eyedropper buttons */
+        #eyedropper-button.active,
+        #border-eyedropper-button.active,
+        #text-eyedropper-button.active {
+            background-color: theme('colors.indigo.600');
+            color: white;
+            border-color: theme('colors.indigo.600');
+        }
+
+        /* Styles for color tiles */
+        .color-tile {
+            width: 2rem; /* w-8 */
+            height: 2rem; /* h-8 */
+            border-radius: 9999px; /* rounded-full */
+            cursor: pointer;
+            /* MODIFIED: Set the 5px gray border directly */
+            border: 1px solid #d1d5db;
+            transition: all 0.1s ease-in-out;
+            box-shadow: theme('boxShadow.sm'); /* Keep the small drop shadow */
+        }
+        .color-tile:hover {
+            transform: scale(1.1);
+            /* MODIFIED: Change border color on hover */
+            border-color: theme('colors.indigo.400');
+        }
+        .color-tile.selected {
+            /* MODIFIED: Change border color when selected */
+            border-color: theme('colors.indigo.600');
+            box-shadow: theme('boxShadow.md');
+            transform: scale(1.1);
+        }
+
+        /* Styles for text object list */
+        .text-object-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem; /* p-2 */
+            background-color: #f9fafb; /* bg-gray-50 */
+            border-radius: 0.5rem; /* rounded-lg */
+            transition: background-color 0.2s; /* NEW: for edit highlighting */
+        }
+        .text-object-item.bg-indigo-100 {
+            background-color: #e0e7ff; /* Tailwind bg-indigo-100 */
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased">
+
+    <div class="container mx-auto max-w-6xl p-4 md:p-8">
+        
+        <!-- Header --><header class="mb-8">
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">Image Packer</h1>
+            <p class="text-lg text-gray-600">Import images, set an export ratio, and pack them into a single file.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:items-start">
+
+            <!-- Column 1: Controls & Image Import --><div class="lg:col-span-1 space-y-8">
+                
+                <!-- Step 1: Image Import --><div class="bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 text-indigo-600">Step 1: Import Images</h2>
+                    <div class="space-y-3">
+                        <input type="file" id="image-input" multiple accept="image/*" class="hidden" onchange="handleImageImport(event)">
+                        <label for="image-input" class="file-input-label w-full cursor-pointer rounded-lg bg-indigo-600 text-white font-semibold text-center py-3 px-5 block">
+                            Add Images
+                        </label>
+                        <button id="clear-all-button" class="w-full rounded-lg bg-red-500 text-white font-semibold py-2 px-4 transition hover:bg-red-600 shadow-sm text-sm">
+                            Clear All Images
+                        </button>
+                    </div>
+                    <p class="text-sm text-gray-500 mt-3">Add one or more images. You can add more from other folders later.</p>
+
+                    <!-- Thumbnails --><div id="thumbnail-container" class="mt-6 max-h-[30rem] overflow-y-auto pr-2 space-y-3">
+                        <p id="thumbnail-placeholder" class="text-gray-500">No images imported yet.</p>
+                        <!-- Thumbnails will be added here by JS --></div>
+                </div>
+
+                <!-- Step 2: Set Options --><div class="bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 text-indigo-600">Step 2: Canvas Options</h2>
+                    <div class="space-y-4">
+                        
+                        <div>
+                            <!-- *** UPDATED: Label text *** --><label for="export-width" class="block text-sm font-medium text-gray-700 mb-1">Image Area Long-side Pixels</label>
+                            <input type="number" id="export-width" value="1920" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        
+                        <div>
+                            <label for="export-ratio" class="block text-sm font-medium text-gray-700 mb-1">Image Area Aspect Ratio</label>
+                            <select id="export-ratio" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="1.77777">16:9</option>
+                                <option value="1.33333">4:3</option>
+                                <option value="1">1:1 (Square)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="flex items-center">
+                            <input type="checkbox" id="portrait-mode" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <label for="portrait-mode" class="ml-2 block text-sm font-medium text-gray-700">
+                                Portrait Mode
+                            </label>
+                        </div>
+                        
+                        <!-- Calculated Size Display --><div>
+                            <p class="text-sm text-gray-600 mt-1">
+                                <!-- *** UPDATED: Label text *** -->Total Canvas Size: 
+                                <span id="calculated-size" class="font-medium text-gray-900">1920x1080</span>
+                            </p>
+                        </div>
+                        
+                        <!-- Background Color Group --><div>
+                            <label for="bg-color" class="block text-sm font-medium text-gray-700 mb-1">Background Color</label>
+                            
+                            <!-- Color Tiles (TOP ROW) --><div id="color-tiles" class="flex flex-wrap gap-2 mb-2"> <!-- MODIFIED: Moved tiles here and added mb-2 --><!-- Color tiles will be injected here by JS --></div>
+
+                            <div class="flex items-center gap-2"> <!-- WRAPPER for second row --><!-- Color Picker --><input type="color" id="bg-color" value="#000000" class="rounded-lg border-gray-300 shadow-sm">
+                                
+                                <!-- Eyedropper Button --><button id="eyedropper-button" title="Pick color from preview" class="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 shadow-sm transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                        <path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146a.5.5 0 0 0 .708.708L9 5.707l.647.647a.5.5 0 0 0 .708-.708L9.207 5l3.147-3.146a1.207 1.207 0 0 0 0-1.708zM2 13.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 0 0-3 0z"/>
+                                    </svg>
+                                </button>
+                                <!-- MOVED: Color tiles are now above --></div>
+                        </div>
+                        
+                    </div>
+                </div>
+
+                <!-- NEW: Step 3: Text & Borders --><div class="bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 text-indigo-600">Step 3: Text & Borders</h2>
+                    
+                    <!-- Border Options --><div class="space-y-4 border-b border-gray-200 pb-4 mb-4">
+                        <h3 class="text-lg font-medium text-gray-800">Canvas Border</h3>
+                        <!-- MODIFIED: Removed the grid-cols-2 wrapper --><div>
+                            <label for="border-width" class="block text-sm font-medium text-gray-700 mb-1">Base Border (px)</label>
+                            <input type="number" id="border-width" value="0" min="0" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label for="border-color" class="block text-sm font-medium text-gray-700 mb-1">Border Color</label>
+                            <div id="border-color-tiles" class="flex flex-wrap gap-2 mb-2">
+                                <!-- Border color tiles will be injected here --></div>
+                            <div class="flex items-center gap-2">
+                                <input type="color" id="border-color" value="#FFFFFF" class="rounded-lg border-gray-300 shadow-sm">
+                                <button id="border-eyedropper-button" type="button" title="Pick color from preview" class="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 shadow-sm transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                        <path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146a.5.5 0 0 0 .708.708L9 5.707l.647.647a.5.5 0 0 0 .708-.708L9.207 5l3.147-3.146a1.207 1.207 0 0 0 0-1.708zM2 13.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 0 0-3 0z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Text Options --><div class="space-y-4">
+                        <h3 class="text-lg font-medium text-gray-800">Add Text</h3>
+                        <div>
+                            <label for="text-content" class="block text-sm font-medium text-gray-700 mb-1">Text Content</label>
+                            <input type="text" id="text-content" placeholder="Your text here" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <!-- MODIFIED: Removed the grid-cols-2 wrapper --><div>
+                            <label for="font-size" class="block text-sm font-medium text-gray-700 mb-1">Font Size (px)</label>
+                            <input type="number" id="font-size" value="48" min="1" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                         <div>
+                            <label for="text-color" class="block text-sm font-medium text-gray-700 mb-1">Text Color</label>
+                            <div id="text-color-tiles" class="flex flex-wrap gap-2 mb-2">
+                                <!-- Text color tiles will be injected here --></div>
+                            <div class="flex items-center gap-2">
+                                <input type="color" id="text-color" value="#000000" class="rounded-lg border-gray-300 shadow-sm">
+                                <button id="text-eyedropper-button" type="button" title="Pick color from preview" class="p-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 shadow-sm transition-colors">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                        <path d="M13.354.646a1.207 1.207 0 0 0-1.708 0L8.5 3.793l-.646-.647a.5.5 0 1 0-.708.708L8.293 5l-7.147 7.146a.5.5 0 0 0 .708.708L9 5.707l.647.647a.5.5 0 0 0 .708-.708L9.207 5l3.147-3.146a1.207 1.207 0 0 0 0-1.708zM2 13.5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 0 0-3 0z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- NEW (Re-added from v8): Alignment and Padding Inputs -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label for="text-v-align" class="block text-sm font-medium text-gray-700 mb-1">Vertical Align</label>
+                                <select id="text-v-align" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="Top">Top</option>
+                                    <option value="Bottom" selected>Bottom</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="text-h-align" class="block text-sm font-medium text-gray-700 mb-1">Horizontal Align</label>
+                                <select id="text-h-align" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="left">Left</option>
+                                    <option value="center" selected>Center</option>
+                                    <option value="right">Right</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label for="text-padding-x" class="block text-sm font-medium text-gray-700 mb-1">Padding X (px)</label>
+                                <input type="number" id="text-padding-x" value="20" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="text-padding-y" class="block text-sm font-medium text-gray-700 mb-1">Padding Y (px)</label>
+                                <input type="number" id="text-padding-y" value="20" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+                        <!-- END Re-added block -->
+
+                        <!-- NEW: Add EXIF Date Button -->
+                        <div class="mb-4">
+                            <button id="add-date-text-button" class="w-full rounded-lg bg-gray-600 text-white font-semibold py-2 px-4 transition hover:bg-gray-700 shadow-sm text-sm">
+                                Add EXIF Date Range
+                            </button>
+                        </div>
+                        
+                        <button id="add-update-text-button" class="w-full rounded-lg bg-indigo-600 text-white font-semibold py-2 px-4 transition hover:bg-indigo-700 shadow-sm">
+                            Add Text
+                        </button>
+                        <!-- NEW: Cancel Edit Button -->
+                        <button id="cancel-edit-button" class="w-full rounded-lg bg-gray-500 text-white font-semibold py-2 px-4 transition hover:bg-gray-600 shadow-sm mt-2 hidden">
+                            Cancel Edit
+                        </button>
+                        
+                        <!-- Text Objects List --><div id="text-objects-container" class="mt-4 max-h-40 overflow-y-auto pr-2 space-y-2">
+                            <!-- Added text objects will appear here --></div>
+                    </div>
+                </div>
+
+                <!-- RENAMED: Step 4: Go! --><div class="bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 text-indigo-600">Step 4: Export</h2>
+                    <div class="space-y-4">
+                        <button id="pack-button" class="w-full rounded-lg bg-green-600 text-white font-semibold py-3 px-5 transition hover:bg-green-700 shadow-md hidden">
+                            Pack Images
+                        </button>
+                        
+                        <div>
+                            <label for="export-format" class="block text-sm font-medium text-gray-700 mb-1">Export Format</label>
+                            <select id="export-format" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="image/png">PNG</option>
+                                <option value="image/jpeg">JPG</option>
+                                <option value="image/webp" selected>WebP</option>
+                            </select>
+                        </div>
+                        
+                        <button id="export-button" class="w-full rounded-lg bg-blue-600 text-white font-semibold py-3 px-5 transition hover:bg-blue-700 shadow-md" disabled>
+                            Export Image
+                        </button>
+                        
+                        <p id="export-size" class="text-sm text-gray-500 text-center">&nbsp;</p>
+                        
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Column 2: Preview --><div class="lg:col-span-2 lg:sticky lg:top-8">
+                <div class="bg-white p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-semibold mb-4 text-indigo-600">Preview</h2>
+                    <canvas id="preview-canvas"></canvas>
+                    <p id="pack-message" class="text-gray-500 mt-4 text-center">Add images to see a preview.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Modal for Messages --><div id="message-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full">
+            <h3 id="message-title" class="text-lg font-medium text-gray-900">Notice</h3>
+            <p id="message-body" class="mt-2 text-sm text-gray-600">This is a message.</p>
+            <div class="mt-4 text-right">
+                <button id="message-close" class="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700">
+                    OK
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Global State ---
+        let importedImages = [];
+        let placedRects = [];
+        let textObjects = []; // To store text objects
+        let exportSettings = {};
+        let debounceTimer = null; 
+        let activeEyedropperTarget = null; // MODIFIED: Tracks which input is active
+        let editingTextId = null; // NEW: Tracks which text object is being edited
+        
+        const presetColors = ['#FFFFFF', '#000000', '#F3F4F6', '#EF4444', '#3B82F6', '#22C55E', '#F59E0B'];
+
+        // --- DOM Elements ---
+        const imageInput = document.getElementById('image-input');
+        const thumbnailContainer = document.getElementById('thumbnail-container');
+        const thumbnailPlaceholder = document.getElementById('thumbnail-placeholder');
+        const packButton = document.getElementById('pack-button'); 
+        const exportButton = document.getElementById('export-button');
+        const previewCanvas = document.getElementById('preview-canvas');
+        const previewCtx = previewCanvas.getContext('2d');
+        const packMessage = document.getElementById('pack-message');
+        const clearAllButton = document.getElementById('clear-all-button'); 
+        
+        const exportWidthInput = document.getElementById('export-width'); 
+        const exportRatioSelect = document.getElementById('export-ratio');
+        const calculatedSizeSpan = document.getElementById('calculated-size');
+        const exportFormatSelect = document.getElementById('export-format');
+        
+        const portraitModeCheckbox = document.getElementById('portrait-mode'); 
+        const exportSizeEl = document.getElementById('export-size');
+        
+        const bgColorInput = document.getElementById('bg-color');
+        const colorTilesContainer = document.getElementById('color-tiles');
+        const eyedropperButton = document.getElementById('eyedropper-button');
+
+        // NEW: DOM elements for Border Color Picker
+        const borderColorInput = document.getElementById('border-color');
+        const borderColorTiles = document.getElementById('border-color-tiles');
+        const borderEyedropperButton = document.getElementById('border-eyedropper-button');
+
+        // NEW: DOM elements for Text Color Picker
+        const textColorInput = document.getElementById('text-color');
+        const textColorTiles = document.getElementById('text-color-tiles');
+        const textEyedropperButton = document.getElementById('text-eyedropper-button');
+
+        // Border & Text DOM Elements
+        const borderWidthInput = document.getElementById('border-width'); // <<< FIX: Added this line
+        // const borderColorInput = document.getElementById('border-color'); // Already defined
+        const textContentInput = document.getElementById('text-content');
+        // const textColorInput = document.getElementById('text-color'); // Already defined
+        const fontSizeInput = document.getElementById('font-size');
+        
+        const textVAlignSelect = document.getElementById('text-v-align');
+        const textHAlignSelect = document.getElementById('text-h-align');
+        const textPaddingXInput = document.getElementById('text-padding-x');
+        const textPaddingYInput = document.getElementById('text-padding-y');
+        
+        const addUpdateTextButton = document.getElementById('add-update-text-button'); // MODIFIED
+        const addDateTextButton = document.getElementById('add-date-text-button'); // NEW: Date button
+        const cancelEditButton = document.getElementById('cancel-edit-button'); // NEW
+        const textObjectsContainer = document.getElementById('text-objects-container');
+        
+        // --- Text Measurement Context ---
+        let _textMeasureCtx = null;
+        function getTextMeasureContext() {
+            if (!_textMeasureCtx) {
+                const tempCanvas = document.createElement('canvas');
+                _textMeasureCtx = tempCanvas.getContext('2d');
+            }
+            return _textMeasureCtx;
+        }
+
+        // --- Message Modal Logic ---
+        const messageModal = document.getElementById('message-modal');
+        const messageTitle = document.getElementById('message-title');
+        const messageBody = document.getElementById('message-body');
+        const messageClose = document.getElementById('message-close');
+
+        messageClose.onclick = () => messageModal.classList.add('hidden');
+
+        // --- Event Listeners ---
+        
+        clearAllButton.addEventListener('click', clearAllImages);
+        
+        // --- Listeners for Auto-packing ---
+        exportWidthInput.addEventListener('input', () => { 
+            updateCalculatedSize(); 
+            triggerAutoPack(); 
+        });
+        exportRatioSelect.addEventListener('change', () => { 
+            updateCalculatedSize(); 
+            triggerAutoPack(); 
+        });
+        portraitModeCheckbox.addEventListener('change', () => { 
+            updateCalculatedSize(); 
+            triggerAutoPack(); 
+        });
+        
+        // REMOVED: Old hard-coded listener
+        // bgColorInput.addEventListener('input', () => { ... });
+        
+        exportFormatSelect.addEventListener('change', updateEstimatedFileSize);
+        
+        // MODIFIED: borderWidthInput listener no longer triggers pack, it's auto-handled
+        borderWidthInput.addEventListener('input', triggerAutoPack);
+        // REMOVED: Old hard-coded listener
+        // borderColorInput.addEventListener('input', triggerAutoPack); 
+        
+        addUpdateTextButton.addEventListener('click', handleAddOrUpdateText); // MODIFIED
+        addDateTextButton.addEventListener('click', addExifDateText); // NEW
+        cancelEditButton.addEventListener('click', clearEditState); // NEW
+        // REMOVED: Old hard-coded listener
+        // eyedropperButton.addEventListener('click', toggleEyedropperMode);
+        previewCanvas.addEventListener('click', handleCanvasClickForEyedropper);
+
+
+        // --- Functions ---
+
+        function triggerAutoPack() {
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+            packMessage.textContent = "Updating layout...";
+            const isHeavy = importedImages.length > 0 && !placedRects.length; // Only long delay for first-pack
+            const delay = isHeavy ? 500 : 100; 
+            debounceTimer = setTimeout(runPackingAlgorithm, delay); 
+        }
+
+        function showMessage(title, body) {
+            messageTitle.textContent = title;
+            messageBody.textContent = body;
+            messageModal.classList.remove('hidden');
+        }
+        
+        // --- NEW: Eyedropper Functions ---
+
+        function rgbToHex(r, g, b) {
+            // Helper to convert RGBA data to a hex string
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+        }
+
+        // MODIFIED: Now handles *which* eyedropper to toggle
+        function toggleEyedropperMode(targetInput, buttonEl) {
+            if (activeEyedropperTarget === targetInput) {
+                // Clicking the same one, deactivate it
+                deactivateEyedropper();
+            } else {
+                // Clicking a new one, deactivate old (if any)
+                if (activeEyedropperTarget) {
+                    deactivateEyedropper();
+                }
+                // Activate new one
+                activeEyedropperTarget = targetInput;
+                buttonEl.classList.add('active');
+                previewCanvas.classList.add('eyedropper-active');
+                packMessage.textContent = "Click on the preview to pick a color.";
+            }
+        }
+
+        // MODIFIED: Now finds the correct button to deactivate
+        function deactivateEyedropper() {
+            if (!activeEyedropperTarget) return; // Already inactive
+
+            // Find the button associated with the active input
+            let activeButton = null;
+            if (activeEyedropperTarget === bgColorInput) activeButton = eyedropperButton;
+            if (activeEyedropperTarget === borderColorInput) activeButton = borderEyedropperButton;
+            if (activeEyedropperTarget === textColorInput) activeButton = textEyedropperButton;
+
+            if (activeButton) {
+                activeButton.classList.remove('active');
+            }
+            
+            activeEyedropperTarget = null;
+            previewCanvas.classList.remove('eyedropper-active');
+            
+            // Restore the pack message to its last known state
+            if (placedRects.length > 0 || textObjects.length > 0) {
+                 if (packMessage.textContent.includes("pick a color")) {
+                     packMessage.textContent = "Layout optimization complete!"; // Or the last known message
+                 }
+            } else {
+                 packMessage.textContent = "Add images to see a preview.";
+            }
+        }
+
+        // MODIFIED: Now applies color to the active target
+        function handleCanvasClickForEyedropper(event) {
+            if (!activeEyedropperTarget) { // MODIFIED
+                return; // Do nothing if eyedropper isn't active
+            }
+
+            // Get click coordinates relative to the canvas, accounting for scaling
+            const rect = previewCanvas.getBoundingClientRect();
+            const scaleX = previewCanvas.width / rect.width;
+            const scaleY = previewCanvas.height / rect.height;
+            
+            const x = (event.clientX - rect.left) * scaleX;
+            const y = (event.clientY - rect.top) * scaleY;
+
+            try {
+                // Get the pixel data from the context
+                const pixelData = previewCtx.getImageData(x, y, 1, 1).data;
+                const [r, g, b] = pixelData;
+                
+                // Convert to hex
+                const hexColor = rgbToHex(r, g, b);
+                
+                // MODIFIED: Apply to the active target
+                activeEyedropperTarget.value = hexColor;
+                
+                // MODIFIED: Deselect all tile groups
+                deselectAllTileGroups(); 
+                
+                // Redraw with the new color
+                triggerAutoPack();
+                
+            } catch (e) {
+                // This can happen if user clicks outside canvas bounds
+                console.error("Eyedropper error:", e);
+                showMessage("Eyedropper Failed", "Could not pick color from that location. This can happen if the canvas is empty or an error occurred.");
+            }
+            
+            // Deactivate after picking a color
+            deactivateEyedropper();
+        }
+
+        // --- End Eyedropper Functions ---
+
+        // *** UPDATED: Sizing logic is now for TOTAL size ***
+        function updateCalculatedSize() {
+            const longSidePixels = parseInt(exportWidthInput.value, 10);
+            const baseRatio = parseFloat(exportRatioSelect.value); 
+            const isPortrait = portraitModeCheckbox.checked;
+
+            if (isNaN(longSidePixels) || isNaN(baseRatio) || longSidePixels <= 0) {
+                calculatedSizeSpan.textContent = "Invalid options";
+                return;
+            }
+
+            let packWidth, packHeight;
+            if (isPortrait) {
+                const finalRatio = 1 / baseRatio; 
+                packHeight = longSidePixels;
+                packWidth = Math.round(packHeight * finalRatio);
+            } else {
+                const finalRatio = baseRatio;
+                packWidth = longSidePixels;
+                packHeight = Math.round(packWidth / finalRatio);
+            }
+            
+            const dynamicBorders = calculateDynamicBorders();
+            const totalWidth = packWidth + dynamicBorders.left + dynamicBorders.right;
+            const totalHeight = packHeight + dynamicBorders.top + dynamicBorders.bottom;
+            
+            calculatedSizeSpan.textContent = `${totalWidth}x${totalHeight}`;
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function updateEstimatedFileSize() {
+            const format = exportFormatSelect.value;
+            if (!previewCanvas || previewCanvas.width === 0 || (placedRects.length === 0 && textObjects.length === 0)) {
+                exportSizeEl.innerHTML = '&nbsp;'; 
+                return;
+            }
+            const dataURL = previewCanvas.toDataURL(format, 0.9); 
+            const head = 'data:' + format + ';base64,';
+            try {
+                const data = dataURL.substring(head.length);
+                const bytes = atob(data).length;
+                exportSizeEl.textContent = `Est. Size: ${formatFileSize(bytes)}`;
+            } catch (e) {
+                console.error("Error calculating file size:", e);
+                exportSizeEl.textContent = "Est. Size: N/A";
+            }
+        }
+        
+        function clearAllImages() {
+            deactivateEyedropper();
+            clearEditState(); // NEW: Clear edit state
+            importedImages = [];
+            textObjects = []; 
+            thumbnailContainer.innerHTML = '';
+            textObjectsContainer.innerHTML = ''; 
+            thumbnailPlaceholder.classList.remove('hidden');
+            imageInput.value = null; 
+            triggerAutoPack(); 
+        }
+
+        function removeImage(imageId) {
+            const index = importedImages.findIndex(img => img.id === imageId);
+            if (index > -1) importedImages.splice(index, 1);
+            
+            const thumbElement = document.getElementById('thumb-' + imageId);
+            if (thumbElement) thumbnailContainer.removeChild(thumbElement);
+            
+            if (importedImages.length === 0) {
+                thumbnailPlaceholder.classList.remove('hidden');
+            }
+            triggerAutoPack(); 
+        }
+        
+        // --- Text Object Functions ---
+        
+        // NEW: Helper function to parse EXIF date string (YYYY:MM:DD HH:MM:SS)
+        function parseExifDate(dateStr) {
+            if (!dateStr) return null;
+            try {
+                const parts = dateStr.split(' ');
+                const dateParts = parts[0].split(':');
+                const timeParts = parts[1].split(':');
+                // Month is 0-indexed in JS Date
+                return new Date(dateParts[0], dateParts[1] - 1, dateParts[2], timeParts[0], timeParts[1], timeParts[2]);
+            } catch (e) {
+                console.error("Could not parse EXIF date:", dateStr, e);
+                return null;
+            }
+        }
+
+        // NEW: Helper function to format a Date object
+        function formatDate(date) {
+            if (!date) return "";
+            return date.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+            });
+        }
+
+        // NEW: Helper function to get the date range string
+        function getExifDateRange() {
+            const dates = importedImages
+                .map(img => img.exifDate)
+                .filter(d => d instanceof Date); // Filter out null/undefined
+
+            if (dates.length === 0) return null;
+
+            const minTimestamp = Math.min(...dates.map(d => d.getTime()));
+            const maxTimestamp = Math.max(...dates.map(d => d.getTime()));
+
+            const minDate = new Date(minTimestamp);
+            const maxDate = new Date(maxTimestamp);
+
+            const formattedMin = formatDate(minDate);
+            const formattedMax = formatDate(maxDate);
+
+            if (formattedMin === formattedMax) {
+                return formattedMin;
+            } else {
+                return `${formattedMin} - ${formattedMax}`;
+            }
+        }
+        
+        // NEW: Event handler for the "Add EXIF Date" button
+        function addExifDateText() {
+            const dateRange = getExifDateRange();
+
+            if (!dateRange) {
+                showMessage("No EXIF Date", "No valid EXIF date information was found in any of the imported images.");
+                return;
+            }
+
+            // Use the current settings from the text inputs
+            const color = textColorInput.value;
+            const size = parseInt(fontSizeInput.value, 10);
+            const vAlign = textVAlignSelect.value;
+            const hAlign = textHAlignSelect.value;
+            const paddingX = parseInt(textPaddingXInput.value, 10);
+            const paddingY = parseInt(textPaddingYInput.value, 10);
+
+            if (isNaN(size) || isNaN(paddingX) || isNaN(paddingY)) {
+                 showMessage("Invalid Text Settings", "Please ensure Font Size, Padding X, and Padding Y are valid numbers.");
+                return;
+            }
+
+            // Add the text object
+            addTextObjectToList(dateRange, color, size, vAlign, hAlign, paddingX, paddingY);
+        }
+
+        // MODIFIED: Renamed from handleAddTextClick
+        function handleAddOrUpdateText() {
+            if (editingTextId) {
+                handleUpdateText();
+            } else {
+                handleAddNewText();
+            }
+        }
+
+        // NEW: Handles the "Add Text" logic
+        function handleAddNewText() {
+            const content = textContentInput.value;
+            const color = textColorInput.value;
+            const size = parseInt(fontSizeInput.value, 10);
+            
+            const vAlign = textVAlignSelect.value;
+            const hAlign = textHAlignSelect.value;
+            const paddingX = parseInt(textPaddingXInput.value, 10);
+            const paddingY = parseInt(textPaddingYInput.value, 10);
+
+            if (!content || isNaN(size) || isNaN(paddingX) || isNaN(paddingY)) {
+                showMessage("Invalid Text", "Please fill in all text fields with valid values.");
+                return;
+            }
+            
+            addTextObjectToList(content, color, size, vAlign, hAlign, paddingX, paddingY);
+            
+            textContentInput.value = ''; // Clear input only after successful add
+        }
+        
+        // NEW: Handles the "Update Text" logic
+        function handleUpdateText() {
+            const textObj = textObjects.find(o => o.id === editingTextId);
+            if (!textObj) return; // Safety check
+
+            // 1. Read values from form
+            const content = textContentInput.value;
+            const color = textColorInput.value;
+            const size = parseInt(fontSizeInput.value, 10);
+            const vAlign = textVAlignSelect.value;
+            const hAlign = textHAlignSelect.value;
+            const paddingX = parseInt(textPaddingXInput.value, 10);
+            const paddingY = parseInt(textPaddingYInput.value, 10);
+            
+            if (!content || isNaN(size) || isNaN(paddingX) || isNaN(paddingY)) {
+                showMessage("Invalid Text", "Please fill in all text fields with valid values.");
+                return;
+            }
+
+            // 2. Update the object in the array
+            textObj.content = content;
+            textObj.color = color;
+            textObj.size = size;
+            textObj.vAlign = vAlign;
+            textObj.hAlign = hAlign;
+            textObj.paddingX = paddingX;
+            textObj.paddingY = paddingY;
+
+            // 3. Update the UI list item
+            const textEl = document.querySelector(`#item-${editingTextId} span`);
+            if (textEl) {
+                textEl.textContent = `"${content}" (${vAlign}-${hAlign}, Pad: ${paddingX},${paddingY})`;
+                textEl.style.color = color;
+            }
+
+            // 4. Reset UI
+            clearEditState();
+            
+            // 5. Repack
+            triggerAutoPack();
+        }
+
+        // NEW: Loads a text object's data into the form for editing
+        function loadTextForEditing(textId) {
+            const textObj = textObjects.find(o => o.id === textId);
+            if (!textObj) return;
+
+            // 0. Clear any previous edit state
+            clearEditState();
+
+            // 1. Set the editing ID
+            editingTextId = textId;
+
+            // 2. Populate form fields
+            textContentInput.value = textObj.content;
+            fontSizeInput.value = textObj.size;
+            textColorInput.value = textObj.color;
+            textVAlignSelect.value = textObj.vAlign;
+            textHAlignSelect.value = textObj.hAlign;
+            textPaddingXInput.value = textObj.paddingX;
+            textPaddingYInput.value = textObj.paddingY;
+
+            // 3. Update button text and style
+            addUpdateTextButton.textContent = 'Update Text';
+            addUpdateTextButton.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+            addUpdateTextButton.classList.add('bg-green-600', 'hover:bg-green-700');
+
+            // 4. Show "Cancel" button
+            cancelEditButton.classList.remove('hidden');
+
+            // 5. Highlight the list item
+            document.getElementById('item-' + textId).classList.add('bg-indigo-100');
+        }
+
+        // NEW: Resets the form and buttons from the edit state
+        function clearEditState() {
+            if (editingTextId) {
+                // Remove highlight
+                const oldItem = document.getElementById('item-' + editingTextId);
+                if (oldItem) oldItem.classList.remove('bg-indigo-100');
+            }
+
+            editingTextId = null;
+
+            // 1. Clear forms to defaults
+            textContentInput.value = '';
+            fontSizeInput.value = 48;
+            textColorInput.value = '#000000';
+            textVAlignSelect.value = 'Bottom';
+            textHAlignSelect.value = 'center';
+            textPaddingXInput.value = 20;
+            textPaddingYInput.value = 20;
+            
+            // Deselect color tiles
+            deselectAllTileGroups();
+            const textTiles = textColorTiles.querySelectorAll('.color-tile');
+            textTiles.forEach(t => {
+                if (t.getAttribute('data-color') === '#000000') t.classList.add('selected');
+            });
+
+
+            // 2. Reset button text and style
+            addUpdateTextButton.textContent = 'Add Text';
+            addUpdateTextButton.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+            addUpdateTextButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+
+            // 3. Hide "Cancel" button
+            cancelEditButton.classList.add('hidden');
+        }
+
+        // MODIFIED: Renamed from addTextObject to addTextObjectToList
+        // This function now takes parameters and is reusable
+        function addTextObjectToList(content, color, size, vAlign, hAlign, paddingX, paddingY) {
+            const textId = 'text-' + Date.now() + Math.floor(Math.random() * 1000); // MODIFIED: Create a CSS-safe ID
+            
+            const textObj = { id: textId, content, color, size, vAlign, hAlign, paddingX, paddingY };
+            textObjects.push(textObj);
+            
+            const item = document.createElement('div');
+            item.id = 'item-' + textId;
+            item.className = 'text-object-item transition-colors'; // MODIFIED: Added transition
+            
+            const textEl = document.createElement('span');
+            textEl.textContent = `"${content}" (${vAlign}-${hAlign}, Pad: ${paddingX},${paddingY})`;
+            textEl.className = 'text-sm text-gray-700 truncate';
+            textEl.style.color = color;
+            
+            // NEW: Edit Button
+            const editBtn = document.createElement('button');
+            editBtn.textContent = 'Edit';
+            editBtn.className = 'ml-auto flex-shrink-0 text-sm text-blue-500 hover:text-blue-700 font-medium';
+            editBtn.setAttribute('onclick', `loadTextForEditing('${textId}')`);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.textContent = 'Remove';
+            removeBtn.className = 'ml-2 flex-shrink-0 text-sm text-red-500 hover:text-red-700 font-medium';
+            removeBtn.setAttribute('onclick', `removeTextObject('${textId}')`);
+            
+            item.appendChild(textEl);
+            item.appendChild(editBtn); // NEW
+            item.appendChild(removeBtn);
+            textObjectsContainer.appendChild(item);
+            
+            // textContentInput.value = ''; // REMOVED: Moved to handleAddTextClick
+            
+            // Recalculate size and repack
+            updateCalculatedSize(); 
+            triggerAutoPack(); 
+        }
+        
+        function removeTextObject(textId) {
+            // NEW: Check if we are removing the item currently being edited
+            if (textId === editingTextId) {
+                clearEditState();
+            }
+
+            const index = textObjects.findIndex(obj => obj.id === textId);
+            if (index > -1) {
+                textObjects.splice(index, 1);
+            }
+            
+            const itemElement = document.getElementById('item-' + textId);
+            if (itemElement) {
+                textObjectsContainer.removeChild(itemElement);
+            }
+            
+            // Recalculate size and repack
+            updateCalculatedSize();
+            triggerAutoPack(); 
+        }
+        
+        
+        // --- Color Tile Functions ---
+        
+        // REMOVED: Old hard-coded initializeColorTiles(), selectColorTile(), deselectAllTiles()
+        
+        // NEW: Reusable function to create an advanced color picker
+        function initializeAdvancedColorPicker(targetInput, tilesContainer, eyedropperButton) {
+            if (!targetInput || !tilesContainer || !eyedropperButton) return;
+
+            tilesContainer.innerHTML = ''; // Clear any existing tiles
+            
+            // 1. Populate Tiles
+            presetColors.forEach((color, index) => {
+                const tile = document.createElement('div');
+                tile.className = 'color-tile';
+                tile.style.backgroundColor = color;
+                tile.setAttribute('data-color', color);
+                
+                // Select the first tile if its value matches the input's default
+                if (targetInput.value.toUpperCase() === color.toUpperCase()) {
+                    tile.classList.add('selected');
+                }
+                
+                // 2. Add Tile Click Listener
+                tile.addEventListener('click', () => {
+                    // Deselect siblings
+                    const siblings = tilesContainer.querySelectorAll('.color-tile');
+                    siblings.forEach(t => t.classList.remove('selected'));
+                    
+                    // Select this tile
+                    tile.classList.add('selected');
+                    
+                    // Set input value
+                    targetInput.value = color;
+                    
+                    // Deactivate eyedropper and redraw
+                    deactivateEyedropper();
+                    triggerAutoPack();
+                });
+                tilesContainer.appendChild(tile);
+            });
+
+            // 3. Add Input Listener
+            targetInput.addEventListener('input', () => {
+                // Deselect tiles in this group
+                const siblings = tilesContainer.querySelectorAll('.color-tile');
+                siblings.forEach(t => t.classList.remove('selected'));
+                deactivateEyedropper();
+                triggerAutoPack();
+            });
+
+            // 4. Add Eyedropper Listener
+            eyedropperButton.addEventListener('click', () => {
+                toggleEyedropperMode(targetInput, eyedropperButton);
+            });
+        }
+        
+        // NEW: Helper to deselect all tiles in all groups
+        function deselectAllTileGroups() {
+            const allTiles = document.querySelectorAll('.color-tile');
+            allTiles.forEach(tile => tile.classList.remove('selected'));
+        }
+
+        // --- END Color Tile Functions ---
+
+
+        // === PHASE 1: IMAGE IMPORT ===
+
+        function handleImageImport(event) {
+            const files = event.target.files;
+            if (files.length === 0) return;
+            
+            const numFilesToLoad = files.length;
+            
+            thumbnailPlaceholder.classList.add('hidden');
+            let filesLoaded = 0;
+
+            for (const file of files) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const imageId = file.name + '-' + Math.random();
+                        const imageObject = {
+                            imageObject: img,
+                            width: img.width,
+                            height: img.height,
+                            dataUrl: e.target.result,
+                            id: imageId,
+                            fileName: file.name,
+                            scaleMultiplier: 1.0,
+                            exifDate: null // NEW: Placeholder for EXIF date
+                        };
+
+                        // NEW: Try to read EXIF data
+                        // We pass the original 'file' object
+                        EXIF.getData(file, function() {
+                            const dateStr = EXIF.getTag(this, "DateTimeOriginal") || EXIF.getTag(this, "DateTime");
+                            if (dateStr) {
+                                imageObject.exifDate = parseExifDate(dateStr);
+                                // console.log(`Found EXIF date for ${imageObject.fileName}: ${imageObject.exifDate}`);
+                            }
+                        });
+                        
+                        importedImages.push(imageObject);
+                        addThumbnail(imageObject);
+                        
+                        filesLoaded++;
+                        if (filesLoaded === numFilesToLoad) {
+                            packMessage.textContent = `${importedImages.length} images loaded. Ready to pack.`;
+                            triggerAutoPack(); 
+                            imageInput.value = null; 
+                        }
+                    };
+                    img.onerror = () => {
+                        console.error("Error loading image:", file.name);
+                        filesLoaded++;
+                        if (filesLoaded === numFilesToLoad) {
+                             packMessage.textContent = `Partial load. ${importedImages.length} images loaded. Ready to pack.`;
+                             triggerAutoPack(); 
+                             imageInput.value = null; 
+                        }
+                    };
+                    img.src = e.target.result;
+                };
+                
+                reader.onerror = () => {
+                    console.error("Error reading file:", file.name);
+                    filesLoaded++; 
+                    if (filesLoaded === numFilesToLoad) { 
+                        packMessage.textContent = `Partial load. ${importedImages.length} images loaded. Ready to pack.`;
+                        triggerAutoPack(); 
+                        imageInput.value = null; 
+                    }
+                };
+                
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function updateImageScale(imageId, newScale) {
+            const scale = parseFloat(newScale);
+            if (isNaN(scale) || scale <= 0) return; 
+
+            const image = importedImages.find(img => img.id === imageId);
+            if (image) {
+                image.scaleMultiplier = scale;
+                triggerAutoPack(); // Trigger pack
+            }
+        }
+
+        function addThumbnail(image) {
+            const thumbDiv = document.createElement('div');
+            thumbDiv.id = 'thumb-' + image.id;
+            thumbDiv.className = 'flex items-center space-x-2 p-2 bg-gray-50 rounded-lg';
+            
+            const img = document.createElement('img');
+            img.src = image.dataUrl;
+            img.className = 'w-12 h-12 object-cover rounded-md border border-gray-200 flex-shrink-0';
+            
+            const textDiv = document.createElement('div');
+            textDiv.className = 'flex-grow min-w-0';
+            const p = document.createElement('p');
+            p.textContent = image.fileName;
+            p.className = 'text-sm text-gray-700 truncate';
+            textDiv.appendChild(p);
+
+            const scaleDiv = document.createElement('div');
+            scaleDiv.className = 'flex-shrink-0 flex items-center space-x-1';
+            
+            const label = document.createElement('label');
+            label.textContent = 'Scale:';
+            label.className = 'text-sm font-medium text-gray-600';
+            label.htmlFor = `scale-${image.id}`;
+
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.id = `scale-${image.id}`;
+            input.className = 'w-16 p-1 border rounded-md shadow-sm text-sm focus:ring-indigo-500 focus:border-indigo-500'; 
+            input.value = image.scaleMultiplier;
+            input.step = 0.1;
+            input.min = 0.1;
+            input.setAttribute('onchange', `updateImageScale('${image.id}', this.value)`);
+
+            const removeButton = document.createElement('button');
+            removeButton.textContent = 'Remove';
+            removeButton.className = 'ml-2 flex-shrink-0 text-sm text-red-500 hover:text-red-700 font-medium';
+            removeButton.setAttribute('onclick', `removeImage('${image.id}')`);
+            
+            scaleDiv.appendChild(label);
+            scaleDiv.appendChild(input);
+            
+            thumbDiv.appendChild(img);
+            thumbDiv.appendChild(textDiv);
+            thumbDiv.appendChild(scaleDiv);
+            thumbDiv.appendChild(removeButton); 
+            thumbnailContainer.appendChild(thumbDiv);
+        }
+
+        // === PHASE 2 & 3: PACKING LOGIC ===
+        
+        // *** UPDATED: calculateDynamicBorders ***
+        // This function now correctly adds the `baseBorder` as a "gap" between text and the image area.
+        function calculateDynamicBorders() {
+            const baseBorder = parseInt(borderWidthInput.value, 10) || 0;
+            
+            // Start with insets equal to the baseBorder. 
+            // This is the default inset if there is NO text.
+            let topInset = baseBorder;
+            let bottomInset = baseBorder;
+            let leftInset = baseBorder;
+            let rightInset = baseBorder;
+            
+            if (textObjects.length > 0) {
+                const ctx = getTextMeasureContext(); 
+                
+                // We need to find the *maximum* inset required by any text object.
+                // These start at 0, because if no text is in a region, 
+                // the inset will default to baseBorder.
+                let maxTextTopInset = 0;
+                let maxTextBottomInset = 0;
+                let maxTextLeftInset = 0;
+                let maxTextRightInset = 0;
+
+                textObjects.forEach(text => {
+                    ctx.font = `${text.size}px Inter, sans-serif`;
+                    const textHeight = text.size; // Using font size as proxy
+
+                    switch(text.vAlign) {
+                        case 'Top':
+                            // NEW LOGIC v6:
+                            // Total space needed = space_from_edge + text + space_from_text
+                            const requiredTopSpace = text.paddingY + textHeight + text.paddingY;
+                            maxTextTopInset = Math.max(maxTextTopInset, requiredTopSpace);
+                            break;
+                        case 'Bottom':
+                            // NEW LOGIC v6:
+                            const requiredBottomSpace = text.paddingY + textHeight + text.paddingY;
+                            maxTextBottomInset = Math.max(maxTextBottomInset, requiredBottomSpace);
+                            break;
+                        // 'Middle' aligned text does not push the top or bottom insets
+                    }
+                    
+                    // --- MODIFICATION V9: REMOVED H-ALIGN LOGIC ---
+                    // The horizontal alignment of text no longer pushes the
+                    // image area. The left/right insets will just be the baseBorder.
+                    /*
+                    switch(text.hAlign) {
+                        case 'left':
+                            // NEW LOGIC v6:
+                            const textWidthLeft = ctx.measureText(text.content).width;
+                            const requiredLeftSpace = text.paddingX + textWidthLeft + text.paddingX;
+                            maxTextLeftInset = Math.max(maxTextLeftInset, requiredLeftSpace);
+                            break;
+                        case 'right':
+                            // NEW LOGIC v6:
+                            const textWidthRight = ctx.measureText(text.content).width;
+                            const requiredRightSpace = text.paddingX + textWidthRight + text.paddingX;
+                            maxTextRightInset = Math.max(maxTextRightInset, requiredRightSpace);
+                            break;
+                        // 'center' aligned text does not push the left or right insets
+                    }
+                    */
+                    // --- END MODIFICATION ---
+                });
+
+                // The final inset is the larger of the baseBorder (if no text on that side)
+                // or the space required by the largest text object on that side.
+                topInset = Math.max(baseBorder, maxTextTopInset);
+                bottomInset = Math.max(baseBorder, maxTextBottomInset);
+                leftInset = Math.max(baseBorder, maxTextLeftInset);
+                rightInset = Math.max(baseBorder, maxTextRightInset);
+            }
+            
+            return {
+                top: Math.ceil(topInset),
+                bottom: Math.ceil(bottomInset),
+                left: Math.ceil(leftInset),
+                right: Math.ceil(rightInset)
+            };
+        }
+        
+        // *** UPDATED: runPackingAlgorithm ***
+        function runPackingAlgorithm() {
+            if (importedImages.length === 0 && textObjects.length === 0) {
+                placedRects = [];
+                drawPreview(); 
+                packMessage.textContent = 'Add images or text to see a preview.';
+                exportButton.disabled = true;
+                exportSizeEl.innerHTML = '&nbsp;';
+                return; 
+            }
+
+            // 1. Get Image Area size from user
+            const longSidePixels = parseInt(exportWidthInput.value, 10);
+            const baseRatio = parseFloat(exportRatioSelect.value);
+            const isPortrait = portraitModeCheckbox.checked;
+            let packWidth, packHeight; // This is now the IMAGE_AREA size
+
+            if (isPortrait) {
+                const finalRatio = 1 / baseRatio;
+                packHeight = longSidePixels;
+                packWidth = Math.round(packHeight * finalRatio);
+            } else {
+                const finalRatio = baseRatio;
+                packWidth = longSidePixels;
+                packHeight = Math.round(packWidth / finalRatio);
+            }
+
+            // 2. Calculate dynamic borders based on text
+            const dynamicBorders = calculateDynamicBorders();
+
+            // 3. Calculate TOTAL canvas size
+            const totalWidth = packWidth + dynamicBorders.left + dynamicBorders.right;
+            const totalHeight = packHeight + dynamicBorders.top + dynamicBorders.bottom;
+            
+            exportSettings = { exportWidth: totalWidth, exportHeight: totalHeight }; 
+            updateCalculatedSize(); // Update the UI to show the new TOTAL size
+
+            if (isNaN(totalWidth) || isNaN(totalHeight) || totalWidth <= 0) {
+                packMessage.textContent = "Invalid settings. Please check pixel values.";
+                return;
+            }
+            
+            // 4. Check if pack area is valid
+            if (packWidth <= 0 || packHeight <= 0) {
+                packMessage.textContent = "Image area became negative. Adjust border/text or image area pixels.";
+                placedRects = []; // Clear images
+                drawPreview(); // Draw text/border only
+                return;
+            }
+
+            // 5. If only text, skip packing
+            if (importedImages.length === 0) {
+                placedRects = []; 
+                updateUIAfterPack({ placedRects: [], notPlacedCount: 0 }); 
+                return;
+            }
+            
+            packMessage.textContent = 'Finding optimal scale...';
+            
+            setTimeout(() => { 
+                let baseSize = findOptimalBaseSize(packWidth, packHeight);
+                console.log(`Auto-scale found optimal size: ${baseSize}`);
+                
+                const packResult = performPacking(baseSize, packWidth, packHeight, exportSettings.bestSortMethod);
+                placedRects = packResult.placedRects; 
+                
+                updateUIAfterPack(packResult); 
+            }, 50); 
+        }
+
+        // *** UPDATED: updateUIAfterPack ***
+        function updateUIAfterPack(packResult) {
+            const notPlacedCount = packResult.notPlacedCount;
+            if (importedImages.length > 0) { 
+                if (notPlacedCount > 0) {
+                    packMessage.textContent = `Packed ${packResult.placedRects.length} images. ${notPlacedCount} images could not fit.`;
+                } else {
+                    packMessage.textContent = `Packed all ${packResult.placedRects.length} images successfully!`;
+                }
+            } else if (textObjects.length > 0) {
+                packMessage.textContent = "Text objects added to canvas.";
+            } else {
+                 packMessage.textContent = "Add images or text to see a preview.";
+            }
+
+            if (placedRects.length > 0) {
+                packMessage.textContent = 'Optimizing layout...';
+                
+                // Get dynamic borders and packing area size
+                const dynamicBorders = calculateDynamicBorders();
+                const packWidth = exportSettings.exportWidth - dynamicBorders.left - dynamicBorders.right;
+                const packHeight = exportSettings.exportHeight - dynamicBorders.top - dynamicBorders.bottom;
+
+                runShiftAndExpand(placedRects, packWidth, packHeight); 
+                
+                packMessage.textContent = 'Consolidating layout...';
+                runFinalConsolidation(placedRects);
+                
+                packMessage.textContent = 'Filling final gaps...';
+                runCompaction(placedRects, packWidth, packHeight);
+                
+                packMessage.textContent = 'Layout optimization complete!';
+            }
+            
+            drawPreview();
+            updateEstimatedFileSize(); 
+            exportButton.disabled = (placedRects.length === 0 && textObjects.length === 0);
+        }
+
+        function performPacking(baseSize, binWidth, binHeight, sortMethod = 'height') {
+            
+            const rectsToPack = importedImages.map(image => {
+                const imageBaseSize = baseSize * image.scaleMultiplier;
+                let newWidth, newHeight;
+                if (image.width > image.height) {
+                    newWidth = imageBaseSize;
+                    newHeight = (image.height / image.width) * imageBaseSize;
+                } else {
+                    newHeight = imageBaseSize;
+                    newWidth = (image.width / image.height) * imageBaseSize;
+                }
+                
+                return {
+                    w: Math.round(newWidth),
+                    h: Math.round(newHeight),
+                    image: image.imageObject,
+                    id: image.id
+                };
+            });
+
+            if (sortMethod === 'height') rectsToPack.sort((a, b) => b.h - a.h);
+            else if (sortMethod === 'width') rectsToPack.sort((a, b) => b.w - a.w);
+            else if (sortMethod === 'area') rectsToPack.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+            else if (sortMethod === 'maxDim') rectsToPack.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
+            
+            let skyline = [{ x: 0, y: 0, w: binWidth }];
+            let localPlacedRects = [];
+            let notPlacedCount = 0;
+            let packSuccess = true;
+
+            for (const rect of rectsToPack) {
+                const spot = findBestSpot(rect, skyline);
+                if (spot) {
+                    if (spot.y + rect.h > binHeight) {
+                        notPlacedCount++;
+                        packSuccess = false;
+                        continue; 
+                    }
+                    localPlacedRects.push({ ...rect, x: spot.x, y: spot.y });
+                    updateSkyline(rect, spot, skyline);
+                } else {
+                    notPlacedCount++;
+                    packSuccess = false;
+                }
+            }
+            if (notPlacedCount > 0) packSuccess = false;
+            return { success: packSuccess, placedRects: localPlacedRects, notPlacedCount: notPlacedCount };
+        }
+
+        function runCompaction(rects, binWidth, binHeight) {
+            let scaledAtLeastOne = true;
+            let pass = 0;
+            const MAX_PASSES_SAFEGUARD = 50; 
+            while (scaledAtLeastOne && pass < MAX_PASSES_SAFEGUARD) {
+                scaledAtLeastOne = false;
+                pass++;
+                rects.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+                for (const rect of rects) {
+                    const aspectRatio = rect.image.width / rect.image.height; 
+                    
+                    let maxWidth = binWidth - rect.x, maxHeight = binHeight - rect.y;
+                    for (const other of rects) {
+                        if (rect === other) continue;
+                        if (other.x >= rect.x + rect.w && other.y < rect.y + rect.h && other.y + other.h > rect.y)
+                            maxWidth = Math.min(maxWidth, other.x - rect.x);
+                        if (other.y >= rect.y + rect.h && other.x < rect.x + rect.w && other.x + other.w > rect.x)
+                            maxHeight = Math.min(maxHeight, other.y - rect.y);
+                    }
+                    
+                    let potentialNewW_byH = maxHeight * aspectRatio;
+                    let potentialNewH_byW = maxWidth / aspectRatio;
+                    
+                    let newW = rect.w, newH = rect.h;
+                    
+                    if (potentialNewW_byH > rect.w && potentialNewH_byW > rect.h) {
+                        if (potentialNewW_byH <= maxWidth && potentialNewH_byW >= maxHeight) {
+                             newW = Math.floor(potentialNewW_byH); newH = maxHeight;
+                        } else if (potentialNewH_byW <= maxHeight && potentialNewW_byH >= maxWidth) {
+                            newW = maxWidth; newH = Math.floor(potentialNewH_byW);
+                        } else {
+                            if (potentialNewW_byH / maxWidth < potentialNewH_byW / maxHeight) {
+                                newW = maxWidth; newH = Math.floor(maxWidth / aspectRatio);
+                            } else {
+                                newW = Math.floor(maxHeight * aspectRatio); newH = maxHeight;
+                            }
+                        }
+                    } else if (potentialNewW_byH > rect.w && potentialNewW_byH <= maxWidth) {
+                        newW = Math.floor(potentialNewW_byH); newH = maxHeight;
+                    } else if (potentialNewH_byW > rect.h && potentialNewH_byW <= maxHeight) {
+                        newW = maxWidth; newH = Math.floor(potentialNewH_byW);
+                    }
+                    
+                    newW = Math.floor(newW); newH = Math.floor(newH);
+                    
+                    if (newW > rect.w || newH > rect.h) {
+                        if (rect.x + newW <= binWidth && rect.y + newH <= binHeight) {
+                            let canScale = true;
+                            for (const other of rects) {
+                                if (rect === other) continue;
+                                const collides = rect.x < other.x + other.w && rect.x + newW > other.x &&
+                                                 rect.y < other.y + other.h && rect.y + newH > other.y;
+                                if (collides) { canScale = false; break; }
+                            }
+                            if (canScale && (newW !== rect.w || newH !== rect.h)) {
+                                rect.w = newW; rect.h = newH; scaledAtLeastOne = true;
+                            }
+                        }
+                    }
+                } 
+            } 
+            if (pass >= MAX_PASSES_SAFEGUARD) console.warn("Compaction reached max pass safeguard.");
+        }
+
+        function runShiftAndExpand(rects, binWidth, binHeight) {
+            let madeChanges = true;
+            let pass = 0;
+            const MAX_PASSES_SAFEGUARD = 50; 
+            while (madeChanges && pass < MAX_PASSES_SAFEGUARD) {
+                madeChanges = false;
+                pass++;
+                runCompaction(rects, binWidth, binHeight);
+                rects.sort((a, b) => a.x - b.x);
+                for (let i = 0; i < rects.length; i++) {
+                    const rectA = rects[i]; 
+                    
+                    const aspectRatioA = rectA.image.width / rectA.image.height;
+                    
+                    let potentialMaxImageH = (binHeight - rectA.y);
+                    let potentialMaxImageW = potentialMaxImageH * aspectRatioA;
+                    let potentialMaxWidth = potentialMaxImageW;
+                    
+                    potentialMaxWidth = Math.min(potentialMaxWidth, binWidth - rectA.x); 
+                    
+                    if (rectA.w >= Math.floor(potentialMaxWidth) - 1) continue;
+                    
+                    let blockingNeighborsB = [];
+                    for (let j = 0; j < rects.length; j++) {
+                        if (i === j) continue;
+                        const rectB = rects[j]; 
+                        if (rectB.x >= rectA.x + rectA.w && rectB.x - (rectA.x + rectA.w) < 2 && 
+                            rectB.y < rectA.y + rectA.h && rectB.y + rectB.h > rectA.y) 
+                            blockingNeighborsB.push(rectB);
+                    }
+                    if (blockingNeighborsB.length > 0) {
+                        let maxPushableDistance = binWidth; 
+                        let chain = [...blockingNeighborsB];
+                        let visited = new Set(blockingNeighborsB.map(r => r.id));
+                        for(let k = 0; k < chain.length; k++) {
+                            const chainRect = chain[k];
+                            let gap = binWidth - (chainRect.x + chainRect.w);
+                            for (let j = 0; j < rects.length; j++) {
+                                const other = rects[j];
+                                if (other.id === chainRect.id) continue;
+                                if (visited.has(other.id) && !blockingNeighborsB.includes(other)) continue;
+                                if (other.x >= chainRect.x + chainRect.w && other.y < chainRect.y + chainRect.h && 
+                                    other.y + other.h > chainRect.y) {
+                                    gap = Math.min(gap, other.x - (chainRect.x + chainRect.w));
+                                    if (!visited.has(other.id)) { chain.push(other); visited.add(other.id); }
+                                }
+                            }
+                            maxPushableDistance = Math.min(maxPushableDistance, gap);
+                        }
+                        if (maxPushableDistance > 2) {
+                            let neededSpace = Math.floor(potentialMaxWidth) - rectA.w;
+                            let shiftAmount = Math.min(maxPushableDistance, neededSpace);
+                            if (shiftAmount > 2) {
+                                for (const rectToMove of chain) rectToMove.x += shiftAmount;
+                                madeChanges = true;
+                                break; 
+                            }
+                        }
+                    }
+                } 
+                if (madeChanges) continue; 
+                rects.sort((a, b) => a.y - b.y);
+                for (let i = 0; i < rects.length; i++) {
+                    const rectA = rects[i]; 
+                    
+                    const aspectRatioA = rectA.image.width / rectA.image.height;
+
+                    let potentialMaxImageW = (binWidth - rectA.x);
+                    let potentialMaxImageH = potentialMaxImageW / aspectRatioA;
+                    let potentialMaxHeight = potentialMaxImageH;
+                    
+                    potentialMaxHeight = Math.min(potentialMaxHeight, binHeight - rectA.y);
+                    
+                    if (rectA.h >= Math.floor(potentialMaxHeight) - 1) continue;
+                    
+                    let blockingNeighborsB = [];
+                    for (let j = 0; j < rects.length; j++) {
+                        if (i === j) continue;
+                        const rectB = rects[j];
+                        if (rectB.y >= rectA.y + rectA.h && rectB.y - (rectA.y + rectA.h) < 2 && 
+                            rectB.x < rectA.x + rectA.w && rectB.x + rectB.w > rectA.x)
+                            blockingNeighborsB.push(rectB);
+                    }
+                    if (blockingNeighborsB.length > 0) {
+                        let maxPushableDistance = binHeight;
+                        let chain = [...blockingNeighborsB];
+                        let visited = new Set(blockingNeighborsB.map(r => r.id));
+                        for (let k = 0; k < chain.length; k++) {
+                            const chainRect = chain[k];
+                            let gap = binHeight - (chainRect.y + chainRect.h);
+                            for (let j = 0; j < rects.length; j++) {
+                                const other = rects[j];
+                                if (other.id === chainRect.id) continue;
+                                if (visited.has(other.id) && !blockingNeighborsB.includes(other)) continue;
+                                if (other.y >= chainRect.y + chainRect.h && other.x < chainRect.x + chainRect.w &&
+                                    other.x + other.w > chainRect.x) {
+                                    gap = Math.min(gap, other.y - (chainRect.y + chainRect.h));
+                                    if (!visited.has(other.id)) { chain.push(other); visited.add(other.id); }
+                                }
+                            }
+                            maxPushableDistance = Math.min(maxPushableDistance, gap);
+                        }
+                        if (maxPushableDistance > 2) {
+                            let neededSpace = Math.floor(potentialMaxHeight) - rectA.h;
+                            let shiftAmount = Math.min(maxPushableDistance, neededSpace);
+                            if (shiftAmount > 2) {
+                                for (const rectToMove of chain) rectToMove.y += shiftAmount;
+                                madeChanges = true;
+                                break; 
+                            }
+                        }
+                    }
+                } 
+            } 
+            runCompaction(rects, binWidth, binHeight);
+            if (pass >= MAX_PASSES_SAFEGUARD) console.warn("Shift & Expand reached max pass safeguard.");
+        }
+
+        function runFinalConsolidation(rects) {
+            let madeChanges = true;
+            let pass = 0;
+            const MAX_PASSES_SAFEGUARD = 50; 
+            while (madeChanges && pass < MAX_PASSES_SAFEGUARD) {
+                madeChanges = false;
+                pass++;
+                rects.sort((a, b) => a.y - b.y);
+                for (const rect of rects) {
+                    let newY = 0; 
+                    for (const other of rects) {
+                        if (rect === other) continue;
+                        if (other.y + other.h <= rect.y + 1 && other.x < rect.x + rect.w && 
+                            other.x + other.w > rect.x) 
+                            newY = Math.max(newY, other.y + other.h);
+                    }
+                    newY = Math.floor(newY); 
+                    if (rect.y !== newY) { rect.y = newY; madeChanges = true; }
+                }
+                rects.sort((a, b) => a.x - b.x);
+                for (const rect of rects) {
+                    let newX = 0; 
+                    for (const other of rects) {
+                        if (rect === other) continue;
+                        if (other.x + other.w <= rect.x + 1 && other.y < rect.y + rect.h &&
+                            other.y + other.h > rect.y)
+                            newX = Math.max(newX, other.x + other.w);
+                    }
+                    newX = Math.floor(newX); 
+                    if (rect.x !== newX) { rect.x = newX; madeChanges = true; }
+                }
+                if (!madeChanges) break; 
+            } 
+            if (pass >= MAX_PASSES_SAFEGUARD) console.warn("Consolidation reached max pass safeguard.");
+        }
+
+        function findOptimalBaseSize(binWidth, binHeight) {
+            const heuristics = ['height', 'width', 'area', 'maxDim'];
+            let overallBestSize = 1, overallBestSortMethod = 'height';
+            for (const method of heuristics) {
+                const bestSizeForThisMethod = runBinarySearch(binWidth, binHeight, method);
+                if (bestSizeForThisMethod > overallBestSize) {
+                    overallBestSize = bestSizeForThisMethod;
+                    overallBestSortMethod = method;
+                }
+            }
+            console.log(`Found best heuristic: '${overallBestSortMethod}' with size ${overallBestSize}`);
+            exportSettings.bestSortMethod = overallBestSortMethod;
+            return overallBestSize;
+        }
+
+        function runBinarySearch(binWidth, binHeight, sortMethod) {
+            let minSize = 1, maxSize = Math.max(binWidth, binHeight), bestSize = 1;
+            for (let i = 0; i < 15; i++) {
+                if (minSize > maxSize) break;
+                let midSize = Math.floor((minSize + maxSize) / 2);
+                if (midSize === 0) break; 
+                const result = performPacking(midSize, binWidth, binHeight, sortMethod);
+                if (result.success) {
+                    bestSize = midSize;
+                    minSize = midSize + 1;
+                } else {
+                    maxSize = midSize - 1;
+                }
+            }
+            return bestSize;
+        }
+
+        function findBestSpot(rect, skyline) {
+            let bestSpot = null, minHeight = Infinity;
+            for (let i = 0; i < skyline.length; i++) {
+                const segment = skyline[i];
+                if (rect.w <= segment.w && segment.y < minHeight) {
+                    minHeight = segment.y;
+                    bestSpot = { x: segment.x, y: segment.y, index: i };
+                } 
+            }
+            return bestSpot;
+        }
+
+        function updateSkyline(rect, spot, skyline) {
+            const newSegment = { x: spot.x, y: spot.y + rect.h, w: rect.w };
+            skyline.splice(spot.index, 0, newSegment);
+            for (let i = 0; i < skyline.length; i++) {
+                const current = skyline[i];
+                if (current.x >= newSegment.x + newSegment.w) continue;
+                const rightA = current.x + current.w, rightB = newSegment.x + newSegment.w;
+                if (current.x < rightB && rightA > newSegment.x) {
+                    if (current === newSegment) continue;
+                    if (current.y <= newSegment.y) {
+                        if (current.x >= newSegment.x && rightA <= rightB) {
+                            skyline.splice(i, 1); i--; 
+                        }
+                        else if (current.x < newSegment.x && rightA > newSegment.x) {
+                            current.w = newSegment.x - current.x; 
+                        }
+                        else if (current.x < rightB && rightA > rightB) {
+                            const newX = rightB;
+                            current.w = rightA - newX;
+                            current.x = newX;
+                        }
+                    }
+                }
+            }
+            mergeSkyline(skyline);
+        }
+
+        function mergeSkyline(skyline) {
+            skyline.sort((a, b) => a.x - b.x); 
+            for (let i = 0; i < skyline.length - 1; i++) {
+                const current = skyline[i], next = skyline[i+1];
+                if (current.y === next.y && current.x + current.w === next.x) {
+                    current.w += next.w; 
+                    skyline.splice(i + 1, 1); 
+                    i--; 
+                }
+            }
+        }
+
+        // *** UPDATED: drawPreview ***
+        function drawPreview() {
+            if (!exportSettings.exportWidth || !exportSettings.exportHeight) {
+                // Calculate size directly as a fallback
+                const longSide = parseInt(exportWidthInput.value, 10) || 1920;
+                const baseRatio = parseFloat(exportRatioSelect.value) || 1.77777;
+                const isPortrait = portraitModeCheckbox.checked;
+                
+                if (isPortrait) {
+                    previewCanvas.height = longSide;
+                    previewCanvas.width = Math.round(longSide * (1 / baseRatio));
+                } else {
+                    previewCanvas.width = longSide;
+                    previewCanvas.height = Math.round(longSide / baseRatio);
+                }
+                previewCanvas.style.aspectRatio = previewCanvas.width / previewCanvas.height;
+            } else {
+                 const { exportWidth, exportHeight } = exportSettings;
+                previewCanvas.width = exportWidth;
+                previewCanvas.height = exportHeight;
+                previewCanvas.style.aspectRatio = exportWidth / exportHeight;
+            }
+            
+            // --- NEW DRAWING LOGIC ---
+            const dynamicBorders = calculateDynamicBorders();
+            const borderColor = borderColorInput.value || '#000000';
+            const bgColor = bgColorInput.value || '#FFFFFF';
+
+            // 1. Draw border color on the *entire* canvas
+            previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+            previewCtx.fillStyle = borderColor; 
+            previewCtx.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
+            
+            // 2. Draw the *background* color on the *inner* packing box
+            previewCtx.fillStyle = bgColor;
+            previewCtx.fillRect(
+                dynamicBorders.left,
+                dynamicBorders.top,
+                previewCanvas.width - dynamicBorders.left - dynamicBorders.right,
+                previewCanvas.height - dynamicBorders.top - dynamicBorders.bottom
+            );
+            
+            // 3. Draw images, offset by the *dynamic* border
+            for (const rect of placedRects) {
+                try {
+                    previewCtx.drawImage(
+                        rect.image, 
+                        rect.x + dynamicBorders.left, // Offset by calculated left inset
+                        rect.y + dynamicBorders.top,  // Offset by calculated top inset
+                        rect.w, 
+                        rect.h
+                    );
+                } catch (e) {
+                    console.error("Error drawing image:", e, rect);
+                    previewCtx.fillStyle = 'red';
+                    previewCtx.fillRect(rect.x + dynamicBorders.left, rect.y + dynamicBorders.top, rect.w, rect.h);
+                }
+            }
+            
+            // 4. Draw text
+            drawTextObjects(previewCtx, dynamicBorders);
+        }
+        
+        // *** UPDATED HELPER FUNCTION for drawing text ***
+        function drawTextObjects(ctx, dynamicBorders) {
+            const canvasWidth = ctx.canvas.width;
+            const canvasHeight = ctx.canvas.height;
+
+            for (const textObj of textObjects) {
+                try {
+                    ctx.fillStyle = textObj.color;
+                    ctx.font = `${textObj.size}px Inter, sans-serif`;
+                    
+                    let x, y;
+                    
+                    // Set Text Align (anchor point)
+                    ctx.textAlign = textObj.hAlign; // 'left', 'center', 'right'
+
+                    // Calculate X based on hAlign
+                    if (textObj.hAlign === 'left') {
+                        x = textObj.paddingX;
+                    } else if (textObj.hAlign === 'right') {
+                        x = canvasWidth - textObj.paddingX;
+                    } else { // 'center'
+                        // Center is relative to the *full canvas width*
+                        x = (canvasWidth / 2); 
+                    }
+
+                    // Calculate Y based on vAlign
+                    if (textObj.vAlign === 'Top') {
+                        ctx.textBaseline = 'top';
+                        y = textObj.paddingY;
+                    } else if (textObj.vAlign === 'Bottom') {
+                        ctx.textBaseline = 'bottom';
+                        y = canvasHeight - textObj.paddingY;
+                    } else { // 'Middle'
+                        ctx.textBaseline = 'middle';
+                        y = (canvasHeight / 2); // Centered in the middle of the *entire canvas*
+                    }
+                    
+                    // Get text metrics *after* setting font
+                    const metrics = ctx.measureText(textObj.content);
+                    const textWidth = metrics.width;
+                    // Use actualBoundingBoxAscent/Descent for more accurate height if available
+                    const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+
+                    // Calculate padding box dimensions
+                    const boxWidth = textWidth + (textObj.paddingX * 2);
+                    const boxHeight = textHeight + (textObj.paddingY * 2);
+
+                    // Adjust boxX, boxY based on text alignment to correctly center the box around the text's calculated position
+                    let boxX, boxY;
+                    if (textObj.hAlign === 'left') {
+                        boxX = x - textObj.paddingX;
+                    } else if (textObj.hAlign === 'right') {
+                        boxX = x - boxWidth + textObj.paddingX;
+                    } else { // 'center'
+                        boxX = x - (boxWidth / 2);
+                    }
+
+                    if (textObj.vAlign === 'Top') {
+                        boxY = y - textObj.paddingY;
+                    } else if (textObj.vAlign === 'Bottom') {
+                        boxY = y - boxHeight + textObj.paddingY;
+                    } else { // 'Middle'
+                        // For 'middle' vertical align, text's y is centered.
+                        // The box should be centered around this y as well.
+                        boxY = y - (boxHeight / 2);
+                    }
+
+                    // Draw the padding box
+                    /* --- MODIFICATION: REMOVED BORDER ---
+                    ctx.strokeStyle = textObj.color; // Use text color for the box border
+                    ctx.lineWidth = 2; // Fixed border width for the box
+                    ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+                    */
+
+                    // Draw the text
+                    ctx.fillText(textObj.content, x, y);
+                    
+                } catch(e) {
+                    console.error("Error drawing text:", e, textObj);
+                }
+            }
+            // Reset baseline for safety
+            ctx.textBaseline = 'top';
+        }
+
+
+        // === PHASE 4: EXPORT IMAGE ===
+
+        exportButton.addEventListener('click', exportImage);
+
+        // *** UPDATED FUNCTION ***
+        function exportImage() {
+            if (placedRects.length === 0 && textObjects.length === 0) { 
+                showMessage("Nothing to Export", "Please add images or text first.");
+                return;
+            }
+
+            const { exportWidth, exportHeight } = exportSettings;
+            
+            const format = exportFormatSelect.value; 
+            let extension = "png";
+            if (format === "image/jpeg") extension = "jpg";
+            if (format === "image/webp") extension = "webp";
+
+            const exportCanvas = document.createElement('canvas');
+            const exportCtx = exportCanvas.getContext('2d');
+            exportCanvas.width = exportWidth;
+            exportCanvas.height = exportHeight;
+            
+            // --- REPLICATE DRAW PREVIEW LOGIC ---
+
+            // 1. Get all drawing parameters
+            const dynamicBorders = calculateDynamicBorders(); 
+            const borderColor = borderColorInput.value || '#000000';
+            const bgColor = bgColorInput.value || '#FFFFFF';
+
+            // 2. Draw border color on *entire* canvas
+            exportCtx.fillStyle = borderColor; 
+            exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+            
+            // 3. Draw *background* color on *inner* box
+            exportCtx.fillStyle = bgColor;
+            exportCtx.fillRect(
+                dynamicBorders.left,
+                dynamicBorders.top,
+                exportCanvas.width - dynamicBorders.left - dynamicBorders.right,
+                exportCanvas.height - dynamicBorders.top - dynamicBorders.bottom
+            );
+            
+            // 4. Draw images, offset by the *dynamic* border
+            for (const rect of placedRects) {
+                 try {
+                    exportCtx.drawImage(
+                        rect.image, 
+                        rect.x + dynamicBorders.left, 
+                        rect.y + dynamicBorders.top, 
+                        rect.w, 
+                        rect.h
+                    );
+                 } catch (e) {
+                     console.error("Error drawing image for export:", e, rect);
+                 }
+            }
+            
+            // 5. Draw text
+            drawTextObjects(exportCtx, dynamicBorders); // Use the same helper function
+
+            // --- END REPLICATE ---
+
+            // For JPG, pass quality, 0.9 = 90%
+            const dataURL = exportCanvas.toDataURL(format, 0.9); 
+            const link = document.createElement('a');
+            link.href = dataURL;
+            link.download = `image-pack-composite.${extension}`; 
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
+        // Call on load to set initial value
+        updateCalculatedSize();
+        // MODIFIED: Call the new, reusable function for all three color pickers
+        initializeAdvancedColorPicker(bgColorInput, colorTilesContainer, eyedropperButton);
+        initializeAdvancedColorPicker(borderColorInput, borderColorTiles, borderEyedropperButton);
+        initializeAdvancedColorPicker(textColorInput, textColorTiles, textEyedropperButton);
+
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
